@@ -77,9 +77,33 @@ class Graph:
         self.name = name
         self.build(ast)
         if self.g is not None:
+            self.travel_dupath()
             for graph in self.g:
                 self.travel_graph(graph)
             self.dot.render(os.path.join('tmp', self.name), view=True)
+
+    def travel_path(self, path):
+        tmp = []
+        for each in path:
+            name = each[0].__class__.__name__
+            if name == 'int':
+                tmp.append('%d|%s' % (each[0], each[1]))
+            else:
+                # 嵌套列表 或 元组
+                name = each.__class__.__name__
+                if name == 'tuple':
+                    tmp.append('( %s )' % self.travel_path(each))
+                else:
+                    tmp.append('[ %s ]' % self.travel_path(each))
+
+        return '-> '.join(tmp)
+
+    def travel_dupath(self):
+        for i in range(len(self.du_path)):
+            print('=======图%d dupath=======' % i)
+            for k, v in self.du_path[i].items():
+                print("%s:\t\t%s" % (k, self.travel_path(v)))
+            print()
 
     def travel_graph(self, node):
         if node.isStart is True:
@@ -251,9 +275,7 @@ class Graph:
         n.d = d
         n.u = u
         # 完善du路径
-        dpath = {each_d: [n.id, 'd'] for each_d in d}
-        upath = {each_u: [n.id, 'u'] for each_u in u}
-        dupath = self.combine_dupath(upath, dpath)
+        dupath = self.combine_du_to_dict(n.id, d=n.d, u=n.u)
         # 添加到图
         self.g.append(n)
         self.du_path.append(dupath)
@@ -274,7 +296,7 @@ class Graph:
             string += self.getDeclTypeAttr(each_typedef.type)
             n.code.append(string)
 
-        dupath = {each_d: [n.id, 'd'] for each_d in n.d}
+        dupath = self.combine_du_to_dict(n.id, d=n.d, u=n.u)
         # 更新到图
         self.g.append(n)
         self.du_path.append(dupath)
@@ -331,9 +353,7 @@ class Graph:
             astn.u += u
 
         # 计算du路径
-        dpath = {each_d: [astn.id, 'd'] for each_d in d}
-        upath = {each_u: [astn.id, 'u'] for each_u in u}
-        dupath = self.combine_dupath(upath, dpath)
+        dupath = self.combine_du_to_dict(astn.id, d=d, u=u)
 
         return astn, dupath
 
@@ -372,7 +392,8 @@ class Graph:
                 # 完善子节点，并把节点添加到child，合并path
                 n, path = self.build_statement(statement, n)
                 node.child.insert(0, n)
-                dupath = self.combine_dupath(dupath, path)
+                # 从后向前添加dupath，所以是dupath = path <- dupath
+                dupath = self.combine_dupath(path, dupath)
                 # 维护计算后的结果
                 statement = []
                 end = n
@@ -386,14 +407,16 @@ class Graph:
                 cond_str, cond_u = self.getComputeStatement_U(children[i].cond)
                 n.code = ['switch(%s)' % cond_str]
                 n.u = cond_u
-                switch_dupath = {each_u: [n.id, 'u'] for each_u in n.u}
-                dupath = self.combine_dupath(dupath, switch_dupath)
+                switch_dupath = self.combine_du_to_dict(n.id, u=n.u)
+                # 从后向前添加
+                dupath = self.combine_dupath(switch_dupath, dupath)
 
                 # 节点加入条件 和 子节点的dupath
                 n, stmt_path = self.build_nested_node(n, children[i].stmt.block_items, end, otherEnd=end, returnEnd=returnEnd)
                 # n.connectTo.insert(0, n.child[0].id) # switch不仅链接此节点
-                # 添加
-                dupath = self.combine_dupath(dupath, stmt_path)
+
+                # 添加多孩子节点
+                dupath = self.combine_multiple_dupath(dupath, stmt_path)
                 node.child.insert(0, n)
                 # print(n.code, n.id, n.connectTo)
                 # for each in n.child:
@@ -407,14 +430,14 @@ class Graph:
                 expr_str, expr_u = self.getComputeStatement_U(children[i].expr)
                 n.code.append('case %s :' % expr_str)
                 n.u = expr_u
-                upath = {each_u: [n.id, 'u'] for each_u in expr_u}
-                dupath = self.combine_dupath(dupath, upath)
+                case_dupath = self.combine_du_to_dict(n.id, n.u)
 
                 # 整理子节点，合并du路径
-                n, case_dupath = self.build_nested_node(n, children[i].stmts, end, otherEnd, returnEnd)
+                n, stmt_dupath = self.build_nested_node(n, children[i].stmts, end, otherEnd, returnEnd)
                 n.connectTo.append(n.child[0].id)
                 # 添加
-                dupath = self.combine_dupath(dupath, case_dupath)
+                case_dupath = self.combine_dupath(case_dupath, stmt_dupath)
+                dupath = self.combine_same_kind_dupath(dupath, case_dupath)
                 node.child.insert(0, n)
                 node.connectTo.insert(0, n.id)
                 # 更新end
@@ -434,7 +457,7 @@ class Graph:
                 n, default_dupath = self.build_nested_node(n, children[i].stmts, end, otherEnd, returnEnd)
                 n.connectTo.append(n.child[0].id)
                 # 添加
-                dupath = self.combine_dupath(dupath, default_dupath)
+                dupath = self.combine_same_kind_dupath(dupath, default_dupath)
                 node.child.insert(0, n)
                 node.connectTo.insert(0, n.id)
                 # 更新end
@@ -452,10 +475,11 @@ class Graph:
                 cond_str, cond_u = self.getComputeStatement_U(children[i].cond)
                 n.code.append("if(%s)" % cond_str)
                 n.u = cond_u
-                cond_upath = {each_u: [n.id, 'u'] for each_u in n.u}
-                dupath = self.combine_dupath(dupath, cond_upath)
+                # 先添加孩子的节点，再添加父节点的dupath
+                cond_dupath = self.combine_du_to_dict(n.id, u=n.u)
 
                 # 建立孩子节点    0: iftrue 1: iffalse if的child形式为 [AstNode1, AstNode2]
+                if_child_dupath = {}
                 child_list = [children[i].iftrue, children[i].iffalse]
                 for each_child in child_list:
                     child_name = each_child.__class__.__name__
@@ -466,13 +490,15 @@ class Graph:
                     elif child_name != "NoneType":
                         tmp = [each_child]
                     child_n, child_dupath = self.build_nested_node(child_n, tmp, end, returnEnd=returnEnd)
+                    if_child_dupath = self.combine_same_kind_dupath(if_child_dupath, child_dupath)
                     # 添加孩子节点
                     n.child.append(child_n)
                     if tmp is None:
                         n.connectTo.append(end.id)
                     else:
                         n.connectTo.append(child_n.child[0].id)
-                    dupath = self.combine_dupath(dupath, child_dupath)
+                dupath = self.combine_multiple_dupath(dupath, if_child_dupath)
+                dupath = self.combine_dupath(cond_dupath, dupath)
 
                 # 添加到主节点中
                 node.child.insert(0, n)
@@ -494,7 +520,10 @@ class Graph:
                 cond_str, cond_u = self.getComputeStatement_U(children[i].cond)
                 n.code = ["do{ ... } while(%s)" % cond_str]
                 n.u = cond_u
-                dupath = self.combine_dupath(dupath, {each_u: [n.id, "u"] for each_u in n.u})
+                # 先添加到dupath中
+                dowhile_dupath = self.combine_du_to_dict(n.id, u=n.u)
+                dupath = self.combine_dupath(dowhile_dupath, dupath)
+
                 # 该节点配置：connectTo: 0True 1False
                 # 配置False节点
                 n.connectTo.insert(0, end.id)
@@ -505,7 +534,9 @@ class Graph:
                 n, stmt_path = self.build_nested_node(n, tmp, n, end, returnEnd, n)
                 # 配置True节点
                 n.connectTo.insert(0, n.child[0].id)
-                dupath = self.combine_dupath(dupath, stmt_path)
+                # 循环体dupath，先扩展成列表形式，再添加到主节点中
+                stmt_dupath = self.combine_same_kind_dupath({},stmt_path)
+                dupath = self.combine_dupath(stmt_dupath, dupath)
 
                 # 维护
                 node.child.insert(0, n)
@@ -521,7 +552,8 @@ class Graph:
                 cond_str, cond_u = self.getComputeStatement_U(children[i].cond)
                 n.code = ["while (%s)" % cond_str]
                 n.u = cond_u
-                dupath = self.combine_dupath(dupath, {each_u: [n.id, "u"] for each_u in n.u})
+                # 后添加到dupath中
+                while_dupath = self.combine_du_to_dict(n.id, u=n.u)
 
                 # 获取节点信息
                 tmp = None
@@ -530,7 +562,11 @@ class Graph:
                 n, stmt_path = self.build_nested_node(n, tmp, n, end, returnEnd, n)
                 # 配置True节点
                 n.connectTo.insert(0, n.child[0].id)
-                dupath = self.combine_dupath(dupath, stmt_path)
+                # 循环体dupath，先扩展成列表形式，再添加到主节点中
+                stmt_dupath = self.combine_same_kind_dupath({},stmt_path)
+                dupath = self.combine_dupath(stmt_dupath, dupath)
+                dupath = self.combine_dupath(while_dupath, dupath)
+
                 # 维护
                 node.child.insert(0, n)
                 end = n # Dowhile不同之处
@@ -556,15 +592,12 @@ class Graph:
                         u += decl_u
                     n.d = d
                     n.u = u
-                    dupath = self.combine_dupath(dupath, {each_d: [n.id, "d"] for each_d in n.d})
-                    dupath = self.combine_dupath(dupath, {each_u: [n.id, "u"] for each_u in n.u})
                     init_str = ", ".join(strings)
                 elif children[i].init.__class__.__name__ == "Assignment":
                     tmpNode = AstNode(-1)
                     tmpNode, _ = self.build_statement([children[i].init], tmpNode)
                     init_str = tmpNode.code[0]
                     n.u = tmpNode.u
-                    dupath = self.combine_dupath(dupath, {each_u: [n.id, "u"] for each_u in n.u})
                 # For的cond属性
                 if children[i].cond is not None:
                     cond_str, cond_u = self.getComputeStatement_U(children[i].cond)
@@ -574,6 +607,8 @@ class Graph:
                     next_str, next_u = self.getComputeStatement_U(children[i].next)
                     n.u += next_u
                 n.code.append("for(%s;%s;%s)" % (init_str, cond_str, next_str))
+                for_dupath = self.combine_du_to_dict(n.id, d=n.d, u=n.u)
+
                 # 完善stmt孩子节点
                 tmp = None
                 stmt_name = children[i].stmt.__class__.__name__
@@ -584,7 +619,10 @@ class Graph:
                 n, stmt_path = self.build_nested_node(n, tmp, n, end, returnEnd, n)
 
                 n.connectTo.insert(0, n.child[0].id)
-                dupath = self.combine_dupath(dupath, stmt_path)
+                # 循环体dupath，先扩展成列表形式，再添加到主节点中
+                stmt_dupath = self.combine_same_kind_dupath({},stmt_path)
+                dupath = self.combine_dupath(stmt_dupath, dupath)
+                dupath = self.combine_dupath(for_dupath, dupath)
                 # 维护节点
                 node.child.insert(0, n)
                 end = n
@@ -619,7 +657,8 @@ class Graph:
                 n.u = expr_u
                 n.code.append("return %s" % expr_str)
                 # 维护节点
-                dupath = self.combine_dupath(dupath, {each_u: [n.id, "u"] for each_u in n.u})
+                return_dupath = self.combine_du_to_dict(n.id, u=n.u)
+                dupath = self.combine_dupath(return_dupath, dupath)
                 node.child.insert(0, n)
                 end = n
 
@@ -635,7 +674,7 @@ class Graph:
             # 完善子节点，并把节点添加到child，合并path
             n, path = self.build_statement(statement, n)
             node.child.insert(0, n)
-            dupath = self.combine_dupath(dupath, path)
+            dupath = self.combine_dupath(path, dupath)
 
         # 如果child代码块为空，添加空节点
         if len(node.child) == 0:
@@ -644,12 +683,42 @@ class Graph:
             node.child.insert(0, n)
         return node, dupath
 
+    def combine_same_kind_dupath(self, dupath, kind):
+        # 注意：这是把kind的属性值添加到dupath列表中
+        for each_k in kind.keys():
+            if each_k in dupath:
+                dupath[each_k].insert(0, kind[each_k])
+            else:
+                dupath[each_k] = [kind[each_k]]
+        return dupath
+
+    def combine_multiple_dupath(self, dupath, child):
+        for each_c in child.keys():
+            if each_c in dupath:
+                dupath[each_c].insert(0, tuple(child[each_c]))
+            else:
+                dupath[each_c] = [tuple(child[each_c])]
+        return dupath
+
+    def combine_du_to_dict(self, uid, d=[], u=[]):
+        d = list(set(d))
+        u = list(set(u))
+        dic = {each_d: [[uid, 'd']] for each_d in d}
+        for each_u in u:
+            if each_u in dic:
+                dic[each_u][0][1] = 'du'
+            else:
+                dic[each_u] = [[uid, 'u']]
+        return dic
+
 
     def combine_dupath(self, p1, p2):
+        # 把p2的列表合并到p1后面
         for key in p2.keys():
             if key in p1:
-                for index in range(len(p2[key])-1, -1, -1):
-                    p1[key].insert(0, p2[key][index])
+                p1[key].extend(p2[key])
+                # for index in range(len(p2[key])-1, -1, -1):
+                #     p1[key].insert(0, p2[key][index])
             else:
                 p1[key] = p2[key]
         return p1
@@ -720,9 +789,7 @@ class Graph:
 
             # 建立节点，然后处理节点内部的Compound对象
             astn = AstNode(self.node_num, code=['Start', code], d=d, u=u, isStart=True)
-            dpath = {each_d: [astn.id, 'd'] for each_d in d}
-            upath = {each_u: [astn.id, 'u'] for each_u in u}
-            dupath = self.combine_dupath(upath, dpath)
+            dupath = self.combine_du_to_dict(astn.id, d=d, u=u)
             self.node_num += 1
 
             # 先加入终止节点，再 从后往前生成节点信息
@@ -743,7 +810,7 @@ class Graph:
             self.du_path.append(dupath)
 
 
-def build_graph(path, name="c"):
+def build_graph(path, name="test"):
     # 处理‘#include’标签
     with open(path, encoding='utf-8') as f:
         txt_list = f.readlines()
