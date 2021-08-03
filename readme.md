@@ -8,7 +8,7 @@ pycparser
 graphviz  
 gcc 
 
-项目中fake_libc_include存放的是pycparser和C语言编译器要求的文件，需要对[代码760行](./graph_gen.py#760)修改cpp_path=gcc安装目录。   
+项目中fake_libc_include存放的是pycparser和C语言编译器要求的文件，需要对[代码827行](./graph_gen.py#L827)修改cpp_path=gcc安装目录。   
 
 ## 使用
 在main.py目录下，放入想要生成的 .c后缀文件，运行main.py，选择想生成的文件，/tmp文件夹会存放处理后的c文件（去除注释和`#include`），并生成相应文件名称文件以及pdf文件。~~**觉得好用就点个星星吧。**~~
