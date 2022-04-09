@@ -223,6 +223,15 @@ class Graph:
             u = [node.name]
         elif node_name == 'NoneType':
             pass
+        elif node_name == "FuncCall":
+            string, _ = self.getComputeStatement_U(node.name)
+            exprlist = node.args.exprs
+            strings = []
+            for expr in exprlist:
+                expr_str, expr_u = self.getComputeStatement_U(expr)
+                u += expr_u
+                strings.append(expr_str)
+            string += '(' + ', '.join(strings) + ')'
         else:
             print("未处理的表达式类型")
             print(node)
@@ -824,7 +833,7 @@ def build_graph(path, name="test"):
                 txt += each
     with open('tmp/c_processfile.c', 'w', encoding='utf-8') as f:
         f.write(txt)
-    ast = parse_file('tmp/c_processfile.c', use_cpp=True, cpp_path=r'C:\MinGW\bin\gcc.exe', cpp_args=['-E', r'-Iutils/fake_libc_include'])
+    ast = parse_file('tmp/c_processfile.c', use_cpp=True, cpp_path=r'C:\MinGW\bin\gcc.exe', cpp_args=['-E', r'-I utils/fake_libc_include'])
     # ast.show()
     # print(ast)
     graph = Graph(ast, name)
