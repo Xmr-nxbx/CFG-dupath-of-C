@@ -10,9 +10,9 @@ pycparser
 graphviz  
 gcc  
 
-fake_libc_include 是 `gcc -I fake_libc_include` 指定头文件路径。此外，需要修改[代码827行](./graph_gen.py#L827)cpp_path=gcc安装目录。
+fake_libc_include 是 `gcc -I fake_libc_include` 指定头文件路径。此外，需要修改[代码836行](./graph_gen.py#L836)cpp_path=gcc安装目录。
 
-fake_libc_include is the path of the header specified in the command `gcc -I fake_libc_include`. In addition, the [code](./graph_gen.py#L827) needs to be modified for the gcc installation directory.
+fake_libc_include is the path of the header specified in the command `gcc -I fake_libc_include`. In addition, the [code](./graph_gen.py#L836) needs to be modified for the gcc installation directory.
 
 ## 使用(Use)
 在main.py目录下，放入想要生成的 .c后缀文件，运行main.py，选择想生成的文件，/tmp文件夹会存放处理后的c文件（去除注释和`#include`），并生成相应文件名称文件以及pdf文件。
